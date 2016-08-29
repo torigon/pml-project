@@ -1,0 +1,210 @@
+---
+title: "Prediction of the Weight Lifting Exercises Quality"
+author: "Yuko Torii"
+date: "August 29, 2016"
+output:
+    html_document: 
+    fig_caption: yes        
+references:
+- id: velloso2013
+  title: Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13)
+  author: 
+  - family: Velloso
+    given: E.
+  - family: Bulling
+    given: A.
+  - family: Gellersen
+    given: H.
+  - family: Ugulino
+    given: W.
+  - family: Fuks
+    given: H.
+  URL: 'http://groupware.les.inf.puc-rio.br/har'
+  publisher: ACM SIGCHI
+  issued:
+    year: 2013
+- id: greski2016
+  title: Improving Performance of Random Forest in caret::::train()
+  author: 
+  - family: Greski
+    given: Leonard
+  URL: 'https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md'
+  publisher: GitHub
+  issued:
+    year: 2016
+---
+
+## Overview
+The purpose of this project is to predict the quality of weight lifting exercises.
+The quality is categorized into 5 classes. The Class A means that the way of the exercise is correct, and the Class B, C, D and E mean that each exercise includes specified common mistakes in a different way.
+The original data of this project is the Weight Lifting Exercises Dataset [see @velloso2013].
+In order to predict the quality, I used the R machine learning packages such as `caret`, `rpart`, `randomForest` and `gbm`.
+
+## Data Processing
+We can download and read the training data `pml-training.csv` and the test data `pml-testing.csv` with the following code:
+
+```{r echo=TRUE}
+if (!file.exists("pml-training.csv")) {
+    download.file(
+        "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+        destfile="pml-training.csv")
+}
+
+if (!file.exists("pml-testing.csv")) {
+    download.file(
+    "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+    destfile="pml-testing.csv")
+}
+
+pml_training <- read.csv("./pml-training.csv")
+pml_testing <- read.csv("./pml-testing.csv")
+```
+
+The numbers of rows and columns of the training data are: 
+
+```{r echo=TRUE}
+dim(pml_training)
+```
+
+According to the paper "Qualitative Activity Recognition of Weight Lifting Exercises" [@velloso2013], there are 96 derived feature sets,
+
+* 4 sensors(belt, arm, dumbbell and forearm) * 3 Euler angles(roll, pitch and yaw) * 8 features(mean, variance, etc.) = 96 derived features
+
+however, I tried the following code 
+
+```{r echo=TRUE,eval=FALSE}
+str(pml_testing)
+```
+
+and found that out test data is missing all of them, i.e. the derived features are all NA values, therefore we have to predict without them.
+
+```{r echo=TRUE,cache=TRUE}
+pml_testing2 <- pml_testing[,-160]      # exclude the problem_id
+pml_testing2 <- pml_testing2[,-(3:7)]   # exclude timestamps and windows
+pml_testing2 <- pml_testing2[,-1]       # exclude the row number
+pml_testing2 <- pml_testing2[colSums(!is.na(pml_testing2)) > 0] # non-NA only
+titles <- c(colnames(pml_testing2), "classe")
+pml_training2 <- pml_training[,titles]
+dim(pml_training2)
+```
+
+The number of the remaining features is `r ncol(pml_training2)` including the `classe` that we will predict.
+
+As the test data `pml-testing.csv` is used for the Project Prediction Quiz, I randomly split the training data into `training` (60%) and `testing` (40%).
+
+```{r echo=TRUE,cache=TRUE,warning=FALSE}
+library(caret)
+set.seed(20168)
+trainIndex = createDataPartition(pml_training2$classe,p=0.6,list=FALSE)
+training = pml_training2[trainIndex,]
+testing = pml_training2[-trainIndex,]
+```
+
+The training data set `training` is used for training models and the test data set `testing` is be used for performance evaluation.
+
+## Exploratory Data Analysis
+Let's perform the **principal component analysis** on the training data set to reduce predictors and create a scatter plot of PC1(the x-axis) and PC2(the y-axis)(see **Figure 1**).
+
+```{r figure1,cache=TRUE,echo=TRUE,warning=FALSE,fig.height=3.5,fig.cap="Figure 1: The Scatterplot of the Weight Lifting Exercises Dataset",fig.align='center'}
+preProc <- preProcess(training[,-54],method="pca",pcaComp=2)
+trainPC <- predict(preProc,training[,-54])
+trainPC <- data.frame(trainPC, classe=training$classe)
+
+library(ggplot2)
+qplot(PC1, PC2, colour=classe, data=trainPC)
+```
+
+Each cluster in the plot seems to represent a participant.
+As classes are not easily distinguishable, algorithms such as the k-nearest neighbors algorithm do not seem to be suitable for solving this problem.
+
+## Training and Evaluating a Model
+### Decision Tree
+
+Let's create a model using the **decision tree** algorithm and predict the classification.
+
+```{r echo=TRUE,cache=TRUE,warning=FALSE,message=FALSE}
+modTree <- train(classe ~ ., method="rpart", data=training)
+predTree <- predict(modTree, newdata=testing)
+matrixTree <- confusionMatrix(predTree, testing$classe)
+matrixTree$table
+matrixTree$overall['Accuracy']
+```
+
+The generated tree is shown in **Figure 2**.
+
+```{r figure2,cache=TRUE,echo=TRUE,warning=FALSE,message=FALSE,fig.cap="Figure 2: The Decision Tree for the Weight Lifting Exercises Prediction",fig.align='center'}
+library(rattle)
+fancyRpartPlot(modTree$finalModel, sub="")
+```
+
+The decision tree works fine, but the accuracy is quite low (`r matrixTree$overall['Accuracy']`).
+One of the reason of this is that the tree does not grow enough to classify the Class D.
+
+## Improving Model Performance
+
+We can improve decision trees by
+
+* tuning control options
+* using different tree algorithms,
+
+however, here I used ensemble meta-algorithms **random forests** and **boosting** as they are time-consuming but tend to give better results by combining multiple models.
+
+### Random Forests and Boosting
+
+Here is the code to perform random forests and boosting.
+I used @greski2016 as a reference to implement parallel processing.
+
+```{r echo=TRUE,cache=TRUE,warning=FALSE,message=FALSE}
+## Configure parallel processing
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1)   # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+## Configure trainControl object
+fitControl <- trainControl(method = "cv", number = 10, allowParallel = TRUE)
+
+## Develop training model
+# Random Forests
+modRf <- train(classe~ ., data=training, method="rf", prox=TRUE, 
+               trControl=fitControl)
+predRf <- predict(modRf, newdata=testing)
+
+# Boosting with trees
+modGbm <- train(classe ~ ., method="gbm", data=training, verbose=FALSE,
+                trControl=fitControl)
+predGbm <- predict(modGbm, newdata=testing)
+
+## De-register parallel processing cluster
+stopCluster(cluster)
+```
+
+The results of evaluation with random forests are as follows:
+
+```{r echo=TRUE,cache=TRUE,warning=FALSE,message=FALSE}
+matrixRf <- confusionMatrix(predRf, testing$classe)
+matrixRf$table
+matrixRf$overall['Accuracy']
+```
+
+The results of evaluation with boosting with trees are as follows:
+
+```{r echo=TRUE,cache=TRUE,warning=FALSE,message=FALSE}
+matrixGbm <- confusionMatrix(predGbm, testing$classe)
+matrixGbm$table
+matrixGbm$overall['Accuracy']
+```
+
+## Conclusions
+I built three models using the decision tree, random forests and boosting that I explained in previous sections.
+I used the most common 10-fold cross validation for resampling of random forests and boosting data in order to improve performance.
+I chose the model created by random forests because
+
+* it is the highest accuracy(`r matrixRf$overall['Accuracy']`) of three models
+* it reduces false positives the most of three models.
+
+Here false positives mean that the Class B, C, D and E are incorrectly identified as the Class A, i.e. ineffective exercises are wrongly misclassified as effective exercises.
+
+The expected out of sample error will be a little worse than in sample error because machine learning algorithms such as random forests tend to overfit.
+
+# References
