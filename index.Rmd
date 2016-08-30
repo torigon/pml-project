@@ -1,7 +1,7 @@
 ---
 title: "Prediction of the Weight Lifting Exercises Quality"
 author: "Yuko Torii"
-date: "August 29, 2016"
+date: "August 30, 2016"
 output:
     html_document: 
     fig_caption: yes        
@@ -76,7 +76,7 @@ however, I tried the following code
 str(pml_testing)
 ```
 
-and found that out test data is missing all of them, i.e. the derived features are all NA values, therefore we have to predict without them.
+and found out that our test data is missing all of them, i.e. the derived features are all NA values, therefore we have to predict without them.
 
 ```{r echo=TRUE,cache=TRUE}
 pml_testing2 <- pml_testing[,-160]      # exclude the problem_id
@@ -92,7 +92,7 @@ The number of the remaining features is `r ncol(pml_training2)` including the `c
 
 As the test data `pml-testing.csv` is used for the Project Prediction Quiz, I randomly split the training data into `training` (60%) and `testing` (40%).
 
-```{r echo=TRUE,cache=TRUE,warning=FALSE}
+```{r echo=TRUE,cache=TRUE,warning=FALSE,message=FALSE}
 library(caret)
 set.seed(20168)
 trainIndex = createDataPartition(pml_training2$classe,p=0.6,list=FALSE)
@@ -105,7 +105,7 @@ The training data set `training` is used for training models and the test data s
 ## Exploratory Data Analysis
 Let's perform the **principal component analysis** on the training data set to reduce predictors and create a scatter plot of PC1(the x-axis) and PC2(the y-axis)(see **Figure 1**).
 
-```{r figure1,cache=TRUE,echo=TRUE,warning=FALSE,fig.height=3.5,fig.cap="Figure 1: The Scatterplot of the Weight Lifting Exercises Dataset",fig.align='center'}
+```{r figure1,cache=TRUE,echo=TRUE,warning=FALSE,fig.height=3.5,fig.cap="Figure 1: The Scatter Plot of the Weight Lifting Exercises Dataset",fig.align='center'}
 preProc <- preProcess(training[,-54],method="pca",pcaComp=2)
 trainPC <- predict(preProc,training[,-54])
 trainPC <- data.frame(trainPC, classe=training$classe)
@@ -147,7 +147,7 @@ We can improve decision trees by
 * tuning control options
 * using different tree algorithms,
 
-however, here I used ensemble meta-algorithms **random forests** and **boosting** as they are time-consuming but tend to give better results by combining multiple models.
+however, I used ensemble meta-algorithms **random forests** and **boosting** here as they are time-consuming but tend to give better results by combining multiple models.
 
 ### Random Forests and Boosting
 
@@ -195,16 +195,18 @@ matrixGbm$table
 matrixGbm$overall['Accuracy']
 ```
 
+The accuracy of random forests are higher than that of boosting.
+
 ## Conclusions
 I built three models using the decision tree, random forests and boosting that I explained in previous sections.
 I used the most common 10-fold cross validation for resampling of random forests and boosting data in order to improve performance.
 I chose the model created by random forests because
 
 * it is the highest accuracy(`r matrixRf$overall['Accuracy']`) of three models
-* it reduces false positives the most of three models.
+* it reduces false positives the most of three models (there are only 2 false positives).
 
 Here false positives mean that the Class B, C, D and E are incorrectly identified as the Class A, i.e. ineffective exercises are wrongly misclassified as effective exercises.
 
 The expected out of sample error will be a little worse than in sample error because machine learning algorithms such as random forests tend to overfit.
 
-# References
+## References
